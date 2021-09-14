@@ -251,6 +251,66 @@ RCT_REMAP_METHOD(refresh,
 /*
  * Authorize a user in exchange for a token with provided OIDServiceConfiguration
  */
+
+- (NSString*)getErrorMessage: (NSError*) error {
+    NSDictionary * userInfo = [error userInfo];
+
+    if (userInfo &&
+        userInfo[OIDOAuthErrorResponseErrorKey] &&
+        userInfo[OIDOAuthErrorResponseErrorKey][OIDOAuthErrorFieldErrorDescription]) {
+        return userInfo[OIDOAuthErrorResponseErrorKey][OIDOAuthErrorFieldErrorDescription];
+    } else {
+        return [error localizedDescription];
+    }
+}
+
+- (NSString*)getErrorCode: (NSError*) error defaultCode: (NSString *) defaultCode {
+    if ([[error domain] isEqualToString:OIDOAuthAuthorizationErrorDomain]) {
+        switch ([error code]) {
+            case OIDErrorCodeOAuthAuthorizationInvalidRequest:
+              return @"invalid_request";
+            case OIDErrorCodeOAuthAuthorizationUnauthorizedClient:
+              return @"unauthorized_client";
+            case OIDErrorCodeOAuthAuthorizationAccessDenied:
+              return @"access_denied";
+            case OIDErrorCodeOAuthAuthorizationUnsupportedResponseType:
+              return @"unsupported_response_type";
+            case OIDErrorCodeOAuthAuthorizationAuthorizationInvalidScope:
+              return @"invalid_scope";
+            case OIDErrorCodeOAuthAuthorizationServerError:
+              return @"server_error";
+            case OIDErrorCodeOAuthAuthorizationTemporarilyUnavailable:
+              return @"temporarily_unavailable";
+        }
+    } else if ([[error domain] isEqualToString:OIDOAuthTokenErrorDomain]) {
+        switch ([error code]) {
+            case OIDErrorCodeOAuthTokenInvalidRequest:
+              return @"invalid_request";
+            case OIDErrorCodeOAuthTokenInvalidClient:
+              return @"invalid_client";
+            case OIDErrorCodeOAuthTokenInvalidGrant:
+              return @"invalid_grant";
+            case OIDErrorCodeOAuthTokenUnauthorizedClient:
+              return @"unauthorized_client";
+            case OIDErrorCodeOAuthTokenUnsupportedGrantType:
+              return @"unsupported_grant_type";
+            case OIDErrorCodeOAuthTokenInvalidScope:
+              return @"invalid_scope";
+        }
+    } else if ([[error domain] isEqualToString:OIDOAuthRegistrationErrorDomain]) {
+        switch ([error code]) {
+            case OIDErrorCodeOAuthRegistrationInvalidRequest:
+              return @"invalid_request";
+            case OIDErrorCodeOAuthRegistrationInvalidRedirectURI:
+              return @"invalid_redirect_uri";
+            case OIDErrorCodeOAuthRegistrationInvalidClientMetadata:
+              return @"invalid_client_metadata";
+        }
+    }
+
+    return defaultCode;
+}
+
 - (void)authorizeWithConfiguration: (OIDServiceConfiguration *) configuration
                        redirectUrl: (NSString *) redirectUrl
                           clientId: (NSString *) clientId
@@ -295,22 +355,33 @@ RCT_REMAP_METHOD(refresh,
         [UIApplication.sharedApplication endBackgroundTask:taskId];
         taskId = UIBackgroundTaskInvalid;
     }];
+    
+    UIViewController *presentingViewController = appDelegate.window.rootViewController.view.window ? appDelegate.window.rootViewController : appDelegate.window.rootViewController.presentedViewController;
 
-    _currentSession = [OIDAuthState authStateByPresentingAuthorizationRequest:request
-                                   presentingViewController:appDelegate.window.rootViewController
-                                                   callback:^(OIDAuthState *_Nullable authState,
-                                                              NSError *_Nullable error) {
-                                                       typeof(self) strongSelf = weakSelf;
-                                                       strongSelf->_currentSession = nil;
-                                                       [UIApplication.sharedApplication endBackgroundTask:taskId];
-                                                       taskId = UIBackgroundTaskInvalid;
-                                                       if (authState) {
-                                                           resolve([self formatResponse:authState.lastTokenResponse
-                                                               withAuthResponse:authState.lastAuthorizationResponse]);
-                                                       } else {
-                                                           reject(@"authentication_failed", [error localizedDescription], error);
-                                                       }
-                                                   }]; // end [OIDAuthState authStateByPresentingAuthorizationRequest:request
+
+    OIDAuthStateAuthorizationCallback callback = ^(OIDAuthState *_Nullable authState, NSError *_Nullable error) {
+                  typeof(self) strongSelf = weakSelf;
+                  strongSelf->_currentSession = nil;
+                  [UIApplication.sharedApplication endBackgroundTask:taskId];
+                  taskId = UIBackgroundTaskInvalid;
+                  if (authState) {
+                      resolve([self formatResponse:authState.lastTokenResponse
+                          withAuthResponse:authState.lastAuthorizationResponse]);
+                  } else {
+                      reject([self getErrorCode: error defaultCode:@"authentication_failed"],
+                             [self getErrorMessage: error], error);
+                  }
+                };
+                
+                if([OIDExternalUserAgentIOSCustomBrowser CustomBrowserSafari] != nil) {
+                    _currentSession = [OIDAuthState authStateByPresentingAuthorizationRequest:request
+                                                                            externalUserAgent:[OIDExternalUserAgentIOSCustomBrowser CustomBrowserSafari]
+                                                                                     callback:callback];
+                } else {
+                    _currentSession = [OIDAuthState authStateByPresentingAuthorizationRequest:request
+                                                                     presentingViewController:presentingViewController
+                                                                                     callback:callback];
+                }// end [OIDAuthState authStateByPresentingAuthorizationRequest:request
 }
 
 
@@ -406,5 +477,4 @@ RCT_REMAP_METHOD(refresh,
              @"tokenEndpointAuthMethod": response.tokenEndpointAuthenticationMethod ? response.tokenEndpointAuthenticationMethod : @"",
              };
 }
-
 @end
